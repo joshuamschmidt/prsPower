@@ -1,0 +1,339 @@
+---
+title: "simple simulation and power analysis for prs testing"
+author: "Joshua Schmidt"
+date: "09/02/2022"
+output:
+  pdf_document:
+    extra_dependencies: ["float"]
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# GRADE cohort simulation and power tests.  
+
+Some simple functions with usage examples to derive power calculations
+of PRS vs outcome, and pr affected across PRS quantiles.
+
+## Example: generate a GRADE like data set.  
+
+This study has recruited ~ 1000 individuals, with ~ population affected
+rates 6-10%.
+
+Defining deciles from PRS, the odds ratio for glaucoma in the top 10% versus
+bottom 10% is 14.9, or 25 for HTG. We can use the base rate, quantile definiton 
+and OR to simulate a dataset.  
+
+### A simulation
+
+```{r , echo=TRUE}
+pacman::p_load('data.table','kableExtra','pwr','ggplot2','tidyverse',install=T,update = F)
+source('R/power_functions.R')
+```
+
+```{r data, echo=TRUE}
+n_cohort <- 1000
+n_quantile <- 100
+quantiles <- c(0.1,0.9)
+OR <- 14.9
+glaucoma_rate <- 6/100
+set.seed(42)
+data <- simulate_GRADE(n_ind = n_cohort, n_group = n_quantile,
+                       OR = OR,base_prevalence = glaucoma_rate,
+                       cuts = quantiles)
+```
+
+```{r grade table, echo=FALSE}
+case_row <- data$full[label=="top" & glaucoma==1][2]
+sampleDT <- rbindlist(list(case_row,
+                           data$full[data$full[ , .I[sample(.N,2)] , by = label]$V1]))
+kableExtra::kable(sampleDT,booktabs = T,caption = "Example GRADE cohort simulation",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+  
+
+We can then check prevalence in cohort, which thankfully we find is 5.9% in this
+simulation. This is natural sampling variance around the 6% prevalence we
+required.
+
+```{r prevalence check, echo=FALSE}
+kableExtra::kable(head(data$full[,.N,by=glaucoma]),booktabs = T,caption = "Prevalence of glaucoma cases in simulation",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+
+```
+
+### Simulated association between prs and glaucoma
+
+We can also check the association between PRS and glaucoma 
+(NB: exp(coefficient) is NOT comparable to the quantile OR, by definition!).
+
+
+```{r example regression full, echo=FALSE}
+mod <- glm(glaucoma ~ prs , family = "binomial",data = data$full)
+s <- summary(mod)
+kableExtra::kable(as.data.table(s$coefficients,keep.rownames = ""),booktabs = T,caption = "glaucoma prs regression, full sample",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+```{r sd units of quantile,echo=F}
+sd_units <- round(define_prs_range(cuts = c(0.1,0.9)),digits=3)
+```
+
+```{r convert coeff to OR, echo =FALSE}
+convertedOR <- round(modCoeff_to_OR(coeff =  s$coefficients[2,1],
+                                    cuts = c(0.1,0.9)),
+                     digits=2)
+```
+
+
+The OR is not comparable, because the model prs coefficient is per unit of prs,
+which being defined as a standard normal is one standard deviation. In contrast,
+defining odds ratios between the top and bottom deciles is equivalent to `r toString(sd_units)` sd units. i.e. the mean prs of the top minus the mean prs of the bottom. Therefore, the relationship between model coefficient and decile OR is:
+
+$$
+OR = exp({coefficent}) \times (\mu_{top} - \mu_{bottom})
+$$
+
+Using these gives an estimate of the top bottom OR of `r toString(convertedOR)`.  
+This is an underestimate, likely due to the small number of samples.
+
+For completeness, regression only on the subsets (100 from top, bottom, and middle of PRS distribution), also finds a significant association (at least in this 
+simulation).  
+
+```{r example regression sub, echo=FALSE}
+mod <- glm(glaucoma ~ prs , family = "binomial",data = data$sampled)
+s <- summary(mod)
+kableExtra::kable(as.data.table(s$coefficients,keep.rownames = ""),booktabs = T,caption = "glaucoma prs regression, 100 per group",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+### Within study Odds Ratios
+
+Finally, lets look at some realised odds ratios. These are to ORs for this within sample comparison:  
+
+```{r OR, echo=FALSE}
+# implied decile ORs
+top_v_mid <- get_OR(gradeDT = data$full, cuts = c(0.1,0.9),labels = c("top","middle"))
+top_v_bottom <- get_OR(gradeDT = data$full, cuts = c(0.1,0.9),labels = c("top","bottom"))
+out <- data.table(comparison=c("topVsBottom","topVsMiddle"),OR=c(top_v_bottom,top_v_mid))
+kableExtra::kable(out,booktabs = T,caption = "realised OR",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+The top vs. bottom OR is likely very inaccurate in GRADE, because we would expect very few cases in the bottom decile.
+
+For giggles, lets simulate 1 million participants to check this intuition!
+
+```{r big sim OR, echo=FALSE,cache=TRUE}
+n_cohort <- 1e6
+n_quantile <- 100
+quantiles <- c(0.1,0.9)
+OR <- 14.9
+glaucoma_rate <- 6/100
+set.seed(42)
+data <- simulate_GRADE(n_ind = n_cohort, n_group = n_quantile,OR = OR,base_prevalence = glaucoma_rate,cuts = quantiles)
+# implied decile ORs
+top_v_mid <- get_OR(gradeDT = data$full, cuts = c(0.1,0.9),labels = c("top","middle"))
+top_v_bottom <- get_OR(gradeDT = data$full, cuts = c(0.1,0.9),labels = c("top","bottom"))
+out <- data.table(comparison=c("topVsBottom","topVsMiddle"),OR=c(top_v_bottom,top_v_mid))
+kableExtra::kable(out,booktabs = T,caption = "realised OR, cohort of one million",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+Huzzah, we were right, and we nicely recapture our simulated OR! (Of course this is tautological, it rather shows that the simulation is just doing what it is supposed to!!)
+
+## Power analysis
+
+Now that we have functions that can simulate a realistic data set, we can use them to test the power of different statistical tests within GRADE.
+
+From the protocol, it seems there are distinct tests that need to be assessed.
+
+### regression
+
+The protocol mentions in the section "Statistical analyses":
+
+`For association analysis, logistic or linear regression will be used, including covariates to account for confounding variables as clinically and statistically appropriate.`
+
+This could either be a regression of glaucoma case/suspect status on prs, or glaucoma case/suspect status on label ("top","bottom","middle").
+
+The later seems most relevant. This can be accomplished by treating "top" as the reference level, and coding dummy variables indicating status in bottom or middle
+deciles: i.e. glaucoma ~ bottom + middle
+
+```{r regression power labels, echo=FALSE, cache=TRUE,warning=FALSE}
+# 6% base rate
+label6_or14 <- powerEstregLabel(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=6/100, cuts=c(0.1,0.9))
+label6_or21 <- powerEstregLabel(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=6/100, cuts=c(0.1,0.9))
+
+# 10% base rate
+label10_or14 <- powerEstregLabel(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=10/100, cuts=c(0.1,0.9))
+label10_or21 <- powerEstregLabel(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=10/100, cuts=c(0.1,0.9))
+
+# 30% base rate
+label30_or14 <- powerEstregLabel(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=30/100, cuts=c(0.1,0.9))
+label30_or21 <- powerEstregLabel(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=30/100, cuts=c(0.1,0.9))
+
+labelPowerDT <- as.data.table(cbind(prevalence=c("6%","6%","10%","10%","30%","30%"),
+                    OR=c(14.9,21,14.9,21,14.9,21),
+                    rbind(label6_or14,label6_or21,label10_or14,label10_or21,label30_or14,label30_or21)))
+kableExtra::kable(labelPowerDT,booktabs = T,caption = "power to detect top vs bottom ot middle in GRADE",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+This has moderate to high power. Note to that because of variance in case numbers between deciles, significance can be achieved for top vs bottom and middle, or only bottom or only middle - which explains why sometimes middle has greater power than the comparison to bottom. Note also that the p-values were corrected for 2 tests, so
+these results are the power after multiple testing correction.
+
+Next using the prs itself as the predictor.
+
+```{r regression power, echo=FALSE, cache=TRUE,warning=FALSE}
+
+# 6% base rate
+prev6_or14 <- powerEstreg(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=6/100, cuts=c(0.1,0.9))
+prev6_or21 <- powerEstreg(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=6/100, cuts=c(0.1,0.9))
+
+# 10% base rate
+prev10_or14 <- powerEstreg(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=10/100, cuts=c(0.1,0.9))
+prev10_or21 <- powerEstreg(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=10/100, cuts=c(0.1,0.9))
+
+# 30% base rate
+prev30_or14 <- powerEstreg(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=30/100, cuts=c(0.1,0.9))
+prev30_or21 <- powerEstreg(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=30/100, cuts=c(0.1,0.9))
+
+regPowerDT <- data.table(prevalence=c("6%","6%","10%","10%","30%","30%"),OR=c(14.9,21,14.9,21,14.9,21),power=c(prev6_or14,prev6_or21,prev10_or14,prev10_or21,prev30_or14,prev30_or21))
+
+kableExtra::kable(regPowerDT,booktabs = T,caption = "power to detect glaucoma vs prs in GRADE",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+Thus, there is very high power to find this association.
+
+### Proportion of cases
+
+The protocol also mentions, in "Study outcomes" that:
+`The primary outcome will be assessing the prevalence of glaucoma and AMD between the bottom decile, middle 80% and top decile of both respective PRS spectra.`
+
+To me that seems to be a test of proportions. That could either be a test of the homogeneity of proportions, using a $\chi^2$ test, or three $Z$ score tests testing each of the pairwise differences in proportions.
+
+As the $Z$ score tests would be done with or without a $\chi^2$ test, i focus on those. p-values are two-tailed and corrected for n = 3 tests.
+
+
+```{r pr power, echo=FALSE, cache=TRUE,warning=FALSE}
+
+# 6% base rate
+prev6_or14Pr <- powerEstproportions(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=6/100, cuts=c(0.1,0.9))
+prev6_or21Pr <- powerEstproportions(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=6/100, cuts=c(0.1,0.9))
+
+# 10% base rate
+prev10_or14Pr <- powerEstproportions(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=10/100, cuts=c(0.1,0.9))
+prev10_or21Pr <- powerEstproportions(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=10/100, cuts=c(0.1,0.9))
+
+# 30% base rate
+prev30_or14Pr <- powerEstproportions(n_sims=1000, n_ind=1000, n_group=100, OR=14.9, base_prevalence=30/100, cuts=c(0.1,0.9))
+prev30_or21Pr <- powerEstproportions(n_sims=1000, n_ind=1000, n_group=100, OR=21, base_prevalence=30/100, cuts=c(0.1,0.9))
+
+prPowerDT <- as.data.table(cbind(prevalence=c("6%","6%","10%","10%","30%","30%"),
+                    OR=c(14.9,21,14.9,21,14.9,21),
+                    rbind(prev6_or14Pr, prev6_or21Pr,prev10_or14Pr, prev10_or21Pr,prev30_or14Pr,prev30_or21Pr)))
+kableExtra::kable(prPowerDT,booktabs = T,caption = "power to detect differences in pr of glaucoma cases across prs deciles in GRADE",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+These simulation results show that there is >> 90% power to detect a difference
+in prevalence rates between top and bottom deciles. There is also moderate to high power to detect differences between the top and bottom, but is clearly contingent on assumptions of base rate of glaucoma and the phenotype tested, with higher power
+for HTG versus glaucoma.
+
+We can also use simulations to get an estimate of the proportion of cases+suspects
+in each prs decile.
+
+```{r proportions of cases+suspects in deciles,echo=F,cache=T}
+pr_p6Or14 <- averagePrevelance(n_sims=500, n_ind=1000, n_group=100, OR=14.9, base_prevalence=6/100, cuts=c(0.1,0.9))
+pr_p6Or14[,`:=`(base_rate="6%",OR="14.9")]
+
+pr_p6Or21 <- averagePrevelance(n_sims=500, n_ind=1000, n_group=100, OR=21, base_prevalence=6/100, cuts=c(0.1,0.9))
+pr_p6Or21[,`:=`(base_rate="6%",OR="21")]
+
+pr_p10Or14 <- averagePrevelance(n_sims=500, n_ind=1000, n_group=100, OR=14.9, base_prevalence=10/100, cuts=c(0.1,0.9))
+pr_p10Or14[,`:=`(base_rate="10%",OR="14.9")]
+
+pr_p10Or21 <- averagePrevelance(n_sims=500, n_ind=1000, n_group=100, OR=21, base_prevalence=10/100, cuts=c(0.1,0.9))
+pr_p10Or21[,`:=`(base_rate="10%",OR="21")]
+
+pr_p30Or14 <- averagePrevelance(n_sims=500, n_ind=1000, n_group=100, OR=14.9, base_prevalence=30/100, cuts=c(0.1,0.9))
+pr_p30Or14[,`:=`(base_rate="30%",OR="14.9")]
+
+pr_p30Or21 <- averagePrevelance(n_sims=500, n_ind=1000, n_group=100, OR=21, base_prevalence=30/100, cuts=c(0.1,0.9))
+pr_p30Or21[,`:=`(base_rate="30%",OR="21")]
+
+allpr <- rbindlist(list(pr_p6Or14,pr_p6Or21,pr_p10Or14,pr_p10Or21,pr_p30Or14,pr_p30Or21))
+allpr_long <- data.table(gather(allpr, "decile", "prevalence", top, middle, bottom))
+allpr_long$base_rate <- factor(allpr_long$base_rate, levels = c("6%", "10%", "30%"))
+allpr_long$OR <- factor(allpr_long$OR, levels = c("14.9","21"))
+allpr_long$decile <- factor(allpr_long$decile, levels = c("top", "middle", "bottom"))
+```
+
+```{r pr plot, echo=FALSE, fig.height= 4, fig.width= 6, fig.cap="Distribution of prs decile glaucoma prevalance"}
+p <- ggplot(allpr_long, aes(x=base_rate, y=prevalence,color=decile)) + 
+  geom_boxplot(outlier.shape=NA) + geom_point(position=position_jitterdodge(),alpha=0.1) + theme_bw() + facet_wrap( ~ OR)
+p
+```
+
+```{r pr values, echo=F}
+means <- allpr_long[,.(prevalence=round(mean(prevalence)*100,digits=2)),by=.(base_rate,decile,OR)]
+means <- means[order(base_rate,OR,decile)]
+kableExtra::kable(means,booktabs = T,caption = "mean expected prevelance per decile, by base rate of glaucoma and OR top vs. bottom") %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+While powerful, these tests cannot correct for other predictors e.e. sex, age etc.
+Which should perhaps mean the generalised linear model framework is preferred.
+
+### Other tests
+
+In the description of statistical power, it appears that a t-test will be used:
+
+`Based on the combined estimated incidence of glaucoma plus glaucoma suspect cases in each group (i.e. 30% in the top decile vs 9% in the bottom decile), the current sample size will yield >80% power (alpha=0.05) to detect a significant difference between the top and bottom deciles of the PRS distribution (two-sided t-test). 
+`
+From this description I am not quite sure of the power estimate.
+
+Given the stated proportions of cases+suspects, sample sizes and alpha, I checked the power of a $\chi^2$, t-test, and Z-test, though of course, $\chi^2$ and Z-test are fundamentally the same test.
+
+```{r, other power, echo=FALSE}
+# all assuming prevelance from protocol
+top_gl <- 30
+top_non <- 70
+bottom_gl <- 9
+bottom_non <- 91
+mt <- matrix(c(top_gl,top_non,bottom_gl,bottom_non),ncol = 2,byrow = T)
+rownames(mt) <- c("top","bottom")
+colnames(mt) <- c("diseased","not-diseased")
+
+# chi test power
+mt_chitest <- chisq.test(mt,correct = T)
+chi_power <- pwr::pwr.chisq.test(w = sqrt(mt_chitest$statistic/200), N = 200,df = 1, sig.level = 0.05)
+
+# t test power
+diff_mean <- (top_gl/(top_gl + top_non)) - (bottom_gl/(bottom_gl + bottom_non))
+pooled_sd <- sd(c(rep.int(1,times=top_gl+bottom_gl),rep.int(0,times=top_non+bottom_non)))
+effect <- diff_mean / pooled_sd
+t_power <- pwr::pwr.t.test(n = top_gl + top_non, d = effect, sig.level = 0.05,type = "two")
+
+# test of proportions
+# essentially the same as X square!
+cohens_effect <- pwr::ES.h(p1 = top_gl/(top_gl + top_non), p2 = bottom_gl/(bottom_gl + bottom_non))
+pr_test <- pwr::pwr.2p.test(n = top_gl + top_non, h = cohens_effect, sig.level = 0.05)
+
+otDT <- data.table(method=c("chi.sq","t-test","z-test of proportions"),power=c(chi_power$power,t_power$power,pr_test$power))
+
+kableExtra::kable(otDT,booktabs = T,caption = "power of Chi.sq, t- and z- tests, given proportions",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+```
+
+
+These three tests are essentially equally, highly powered.
+
+### Question
+
+Note too that the quoted differences in prevelance between top and bottom deciles
+imply OR of 3.59-4.33:
+
+$(0.1/0.9)/(0.03/0.97) = 3.59$ $(0.3/0.7)/(0.09/0.91) = 4.33$
+
+These OR are similar to the one reported in Craig et. al. 2020 for top decile versus the rest. For example:  
+
+`While comparing the top and bottom deciles shows the dose–response across deciles, one can also consider the risk in the high-PRS individuals versus all others; when this is done in the ANZRAG cohort, the OR is 4.2 and 8.5 in the top 10 and 1%, respectively, of individuals versus all remaining individuals (Supplementary Table 9).`
+
+Does this mean that 3% diagnosed and 9% diagnosed+suspects is for the middle 80%, rather than the bottom decile?
+
+From the simulations, assuming a base rate of 6% and OR of 14.9 top vs bottom, the prevelances should be, top to bottom, 16.5%, 5.54% and 1% (realised OR ~ 14, 3.4). 
+For 10% base rate this is 26.20%, 9.02% and 2.32% (realised OR ~ 14.9, 3.6). This later one is closest to the figures given in Georgie's GRADE paper.

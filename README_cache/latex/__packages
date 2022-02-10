@@ -1,0 +1,12 @@
+data.table
+kableExtra
+pwr
+ggplot2
+tidyverse
+tibble
+tidyr
+readr
+purrr
+dplyr
+stringr
+forcats
