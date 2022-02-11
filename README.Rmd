@@ -3,21 +3,25 @@ title: "simple simulation and power analysis for prs testing"
 author: "Joshua Schmidt"
 date: "09/02/2022"
 output:
+  github_document:
+    toc: true
+    keep_html: true
   pdf_document:
     extra_dependencies: ["float"]
-    keep_md: yes
-  html_document:
-    keep_md: yes
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = TRUE,cache.path = 'README_cache/latex/')
 ```
 
 # GRADE cohort simulation and power tests.  
 
 Some simple functions with usage examples to derive power calculations
 of PRS vs outcome, and pr affected across PRS quantiles.
+
+If viewing on github (https://github.com/joshuamschmidt/prsPower), it is
+best to look at README.pdf for a properly formatted doc, and README.Rmd for
+the underlying R code.
 
 ## Example: generate a GRADE like data set.  
 

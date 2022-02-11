@@ -17,6 +17,10 @@ output:
 Some simple functions with usage examples to derive power calculations
 of PRS vs outcome, and pr affected across PRS quantiles.
 
+If viewing on github (https://github.com/joshuamschmidt/prsPower), it is
+best to look at README.pdf for a properly formatted doc, and README.Rmd for
+the underlying R code.
+
 ## Example: generate a GRADE like data set.  
 
 This study has recruited ~ 1000 individuals, with ~ population affected
