@@ -50,16 +50,18 @@ data <- simulate_GRADE(n_ind = n_cohort, n_group = n_quantile,
 case_row <- data$full[label=="top" & glaucoma==1][2]
 sampleDT <- rbindlist(list(case_row,
                            data$full[data$full[ , .I[sample(.N,2)] , by = label]$V1]))
+casenDT <- data$full[,.N,by=glaucoma]
+case_pr <- round(casenDT[glaucoma==1,N]/1000*100,digits=1)
 kableExtra::kable(sampleDT,booktabs = T,caption = "Example GRADE cohort simulation",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
 ```
   
 
-We can then check prevalence in cohort, which thankfully we find is 5.9% in this
+We can then check prevalence in cohort, which thankfully we find is `r toString(case_pr)`% in this
 simulation. This is natural sampling variance around the 6% prevalence we
 required.
 
 ```{r prevalence check, echo=FALSE}
-kableExtra::kable(head(data$full[,.N,by=glaucoma]),booktabs = T,caption = "Prevalence of glaucoma cases in simulation",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
+kableExtra::kable(casenDT,booktabs = T,caption = "Prevalence of glaucoma cases in simulation",digits = 4) %>% kableExtra::kable_styling(latex_options = c("HOLD_position"))
 
 ```
 
